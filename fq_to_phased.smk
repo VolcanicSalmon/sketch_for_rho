@@ -7,7 +7,7 @@ samp=[os.path.basename(file).split("_R1.fastq.gz")[0] for file in fws ]
 rvs=[os.path.basename(fws).replace("R1.fastq.gz","R2.fastq.gz") for file in fws]
 rule all:
   input:
-    "phased.vcf.gz"
+    "cm.txt"
 rule rqc:
   input:
     fw="{samp}_R1.fastq.gz",
@@ -138,13 +138,24 @@ rule gatk_genotype:
     vcfarray=`ls $1 *gt.vcf.gz | sed "s#^$1/#1/g" | awk '{print " I=$0"}'`
     gatk MergeVcfs ${vcfarray} -O {output.combinedvcf}
     '''
+rule vcf_ped:
+  input:
+    invcf="combined.vcf.gz",
+    ped=config["pedigree"]
+  output:
+    outvcf="combined_ped.vcf.gz"
+  shell:
+    '''
+    gatk -V {input.invcf} -ped {input.ped} -O {output.outvcf} 
+    '''
 rule lenient_ft:
   input:
-    invcf="combined.vcf.gz"
+    invcf="combined_ped.vcf.gz"
   output:
     vcf_rmis="combined_rmis.vcf.gz"
   params:
     fmis="F_MISSING > 0"
+
   shell:
     '''
     bcftools view -e {params.fmis} {input.invcf} -Oz -o {output.vcf_rmis} 

@@ -4,7 +4,7 @@ import pathlib
 import os 
 fws=glob.glob("*_R1.fastq.gz")
 samp=[os.path.basename(file).split("_R1.fastq.gz")[0] for file in fws ]
-rvs=[os.path.basename(fws).replace("R1.fastq.gz","R2.fastq.gz") for file in fws]
+rvs=[os.path.basename(file).replace("R1.fastq.gz","R2.fastq.gz") for file in fws]
 rule all:
   input:
     "cm.txt"
@@ -37,7 +37,7 @@ rule trim:
     minqual=config["trim_minqual"],
     adapter=config["trim_adapter"],
     winsize=config["trim_winsize"],
-    threshold=contig["trim_threshold"]
+    threshold=config["trim_threshold"]
   shell:
     '''
     trimmomatic PE {input.fw} {input.rv} {output.fwtrim} {output.fwunp} {output.rvtrim} {output.rvunp} ILLUMINACLIP:{params.adapter} SLIDINGWINDOW:{params.winsize}:{params.threshold} LEADING:{params.minqual} TRAILING:{params.minqual} MINLEN:{params.minlen}
@@ -58,10 +58,10 @@ rule bwa_sam:
     '''
 rule bam_depth:
   input:
-    inbam="{samp}.bam"
+    inbam="{samp}.bam",
     ref=config["ref"]
   output:
-    outdepth="{samp}.cover.txt"
+    coverage="{samp}.cover.txt"
   shell:
     '''
     samtools index {input.inbam}
@@ -119,7 +119,6 @@ rule gatk_gendb:
   shell:
     '''
     [ ! -f interval.txt ] && awk '{print $1}' {input.ref} > interval.txt
-    ints=`sed -n {resources.}`
     gatk --java-options {params.java} -L {params.interval} --merge-input-intervals --tmp-dir {params.tmpdir} --batch-size {params.batchsize} --sample-name-map {input.metadata} --genomicsdb-workspace-path {output.gendb}
     '''
 rule gatk_genotype:
@@ -135,8 +134,8 @@ rule gatk_genotype:
   shell:
     '''
     gatk --java-options {params.java} GenotypeGVCFs -R {input.ref} -O {params.vcf} -V gendb://{params.gendb} -L {input.intervals} 
-    vcfarray=`ls $1 *gt.vcf.gz | sed "s#^$1/#1/g" | awk '{print " I=$0"}'`
-    gatk MergeVcfs ${vcfarray} -O {output.combinedvcf}
+    vcfarray=$(ls *.gt.vcf.gz | awk '{{print "I="$1}}')
+    gatk MergeVcfs $vcfarray -O {output.combinedvcf}
     '''
 rule vcf_ped:
   input:
@@ -146,7 +145,7 @@ rule vcf_ped:
     outvcf="combined_ped.vcf.gz"
   shell:
     '''
-    gatk -V {input.invcf} -ped {input.ped} -O {output.outvcf} 
+    gatk CalculateGenotypePosteriors -V {input.invcf} -ped {input.ped} -O {output.outvcf} 
     '''
 rule lenient_ft:
   input:
@@ -169,5 +168,32 @@ rule vcf_phase:
     outphase="phased.vcf.gz"
   shell:
     '''
-    whatshap phase --reference {input.ref} {input.invcf} {input.bam} -o {outphase}
+    whatshap phase --reference {input.ref} {input.invcf} {input.bam} -o {output.outphase}
     '''
+rule vcf_ldhat:
+  input:
+    invcf="phased.vcf.gz"
+  output:
+    outlink="phased.link"
+  params:
+    lift_anno=config["lifted_chr"]
+
+  shell:
+    '''
+    vcftools --gzvcf {input.invcf} --out {output.outlink} --ldhat --phased
+    '''
+rule vcf_likelihood:
+  input:
+    linkin="phased.link"
+  output:
+    liketab="phased.lik.tsv"
+  params:
+    ped=config["pedigree"]
+  shell:
+    '''
+    vcf_to_lik.py -i {input.linkin} -o {output.liketab} -p {params.ped}
+    '''
+rule ldhat_interval:
+  input:
+    linkin=
+
